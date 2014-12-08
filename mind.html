@@ -1,0 +1,218 @@
+<html>
+<head>
+<meta charset="utf-8">
+<link href="css/main.css" rel="stylesheet">
+<link rel="stylesheet" href="css/jquery.mCustomScrollbar.css" />
+<script src="js/vendor/jquery-1.10.2.min.js"></script>
+<script src="js/vendor/d3.v3.min.js"></script>
+<script src="js/vendor/ua.js"></script>
+<script src="js/global.js"></script>
+<script src="js/vendor/shortcuts.js"></script>
+<script src="js/vendor/jquery-ui.min.js"></script>
+<script src="js/shortcutsInit.js"></script>
+<script src="js/vendor/jquery.mousewheel.min.js"></script>
+<script src="js/vendor/jquery.mCustomScrollbar.min.js"></script>
+<!-- script src="mind.js"></script> -->
+<script type="text/javascript">
+
+$(function(){
+	var viewerWidth = Gol.viewerWidth = $(document).width(),
+    viewerHeight = Gol.viewerHeight = $(document).height();
+	//初始的缩放比例
+	var scaleRate = Gol.scaleRate = 1, maxScaleRate = Gol.maxScaleRate = 3, minScaleRate = Gol.minScaleRate = 0.1, scaleStepping = Gol.scaleStepping = 0.1;
+	Gol.originStepping = 1;
+	Gol.origin.x = Gol.origin.y = 0;
+	
+	var margin = {top: 30, right: 30, bottom: 30, left: 30},
+    padding = Gol.padding,
+    width = viewerWidth-2*padding,
+    height = viewerHeight-2*padding;
+
+	var x = d3.scale.linear()
+	    .domain([0, width/10])
+	    .rangeRound([padding, width-padding]);
+	
+	var y = d3.scale.linear()
+	    .domain([0, height/10])
+	    .rangeRound([height-padding, padding]);
+	    
+	    $('#tree-container').css({margin:padding});
+	    
+	    var svg = d3.select("#tree-container").append("svg")
+	    .attr({"width": width,"height": height})
+	    //画布SVG的范围
+	    svg.append('rect')
+	    .attr({"x": 0,"y": 0,"width":width,"height":height,"stroke":'orange','stroke-width':3})
+	    
+	// var xAxis = d3.svg.axis()
+	//     .scale(x)
+	//     .orient("bottom")
+	//     .ticks(40)
+	//     // .tickSize(-height);
+	
+	// var yAxis = d3.svg.axis()
+	//     .scale(y)
+	//     .orient("left")
+	//     .ticks(30)
+	//     // .tickSize(-width);
+	    
+	// svg.append("g")
+	//     .attr("class", "x axis")
+	//     .attr("transform", "translate(0," + (viewerHeight-padding) + ")")
+	//     .call(xAxis);
+	// svg.append("g")
+	//     .attr("class", "y axis")
+	//     .attr("transform", "translate(" + padding + ",0)")
+	//     .call(yAxis);
+	    
+	// svg.append("defs").append("clipPath")
+	// .attr("id", "clipping")
+	// .append("rect")
+	// .attr({x:0,y:0,width:width-2*padding,height:height-2*padding});
+	//遮罩的范围
+	// svg.append('rect')
+	// .attr({x: padding,y: padding,width:width-2*padding,height:height-2*padding,stroke:'#fff','stroke-width':1})
+	// .attr("clip-path","url(#clipping)");
+	
+	//
+	var zg = Gol.zg = svg.append("g")
+	.attr({"transform": "translate("+padding+"," +padding+ ")"})
+	.call(d3.behavior.zoom().x(x).y(y).scaleExtent([minScaleRate, maxScaleRate]).on("zoom", Gol.zoom));
+	//监听事件的可见要素
+		zg.append("rect")
+		.attr("class", "overlay")
+		.attr("width", width)
+		.attr("height", height);
+	//使用一个SVG组，来加快缩放移动的速度
+	var workspace = Gol.workspace = zg.append("g");
+	
+	var rootX = Gol.rootX,rootY = Gol.rootY,textLeftMargin=Gol.textLeftMargin,nodeHeight=Gol.nodeHeight;
+	var curNode = Gol.curNode = d3.select('#node1');
+	
+	var data = clone(Gol.data);
+	var tree = Gol.tree = d3.layout.tree();
+//	.sort(function(a, b) {
+//		  return a.y0 < b.y0 ? -1 : a.y0 > b.y0 ? 1 : 0;
+//	});
+	var da = tree.nodes(data);
+	Gol.links = tree.links(da);
+
+	Gol.render(da);
+	//建立链表
+	setLinkedList();
+	
+	//排序建立同级兄弟链表
+	function setLinkedList(){
+		Gol.levelList.forEach(function(list,i){
+			//排序
+			var l = list.left = quickSort(list.left,'y1');
+			var r = list.right = quickSort(list.right,'y1');
+			//建立同级兄弟链表
+			var llen = l.length;
+			var rlen = r.length;
+			if(llen>0){
+				var p = l[l.length-1], n=l[0];
+				if(rlen>0){
+					n=r[r.length-1];
+					p=r[0];
+				}
+				setDomLinkedList(l,p,n);
+			}
+			if(rlen>0){
+				var p = r[r.length-1], n=r[0];
+				if(llen>0){
+					n=l[l.length-1];
+					p=l[0];
+				}
+				setDomLinkedList(r,p,n);
+			}
+		});
+	}
+	
+	//在各个节点上使用data来保存一个DOM的链表的节点，它包括到前一个DOM对象和下一个DOM对象的连接。
+	//这样就可以使用上下键来在兄弟节点间移动了。
+	//还要做一个链表的数据结构来保存这种关系。这个链表是按层级来命名的。
+	//使用ID来确保DOM同JS对象的关系
+	//左侧最上边节点的prev是右侧最下边一个节点，左侧最下边节点的next是右侧最上边一个节点
+	//右侧最上边节点的prev是左侧最下边一个节点，右侧最下边节点的next是左侧最上边一个节点
+	//这样同级间移动就是一个8字了
+	function setDomLinkedList(arr,p,n){
+		arr.forEach(function(d,i){
+			if(arr[i-1]!==undefined){
+				var next = d3.select('#'+arr[i-1].id);
+			}else{
+				var next = d3.select('#'+n.id);
+			}
+			if(arr[i+1]!==undefined){
+				var prev = d3.select('#'+arr[i+1].id);
+			}else{
+				var prev = d3.select('#'+p.id);
+			}
+			d3.select('#'+d.id).property('LevelLinkedList',{"prev":prev,"data":d.id,"next":next});
+		});
+	}
+		
+/*
+	d3.select('#node1').property('LevelLinkedList',{"prev":null,"data":"node1","next":d3.select('#node2')});
+	d3.select('#node2').property('LevelLinkedList',{"prev":d3.select('#node1'),"data":"node2","next":d3.select('#node3')});
+	d3.select('#node3').property('LevelLinkedList',{"prev":d3.select('#node2'),"data":"node3","next":d3.select('#node4')});
+	d3.select('#node4').property('LevelLinkedList',{"prev":d3.select('#node3'),"data":"node4","next":d3.select('#node5')});
+	d3.select('#node5').property('LevelLinkedList',{"prev":d3.select('#node4'),"data":"node5","next":null});
+	*/
+	$('#textDialog').draggable();
+	
+	$("#shortcutsDialog").mCustomScrollbar({theme:"minimal-dark",axis:"yx"});
+	$('#shortcutsDialog').blur(function(){
+		Gol.closeDialog('shortcutsDialog');
+	});
+
+});
+
+
+
+</script>
+
+</head>
+<body>
+    <div id="tree-container"></div>
+    <div id="textDialog" class="dialog">
+		<input type="text" style="width:100px;" id="nodeText" value="" />
+	</div>
+	<div id="shortcutsDialog" class="dialog" tabindex="1">
+		<dl>
+			<dt>Ctrl+Shift+L</dt>
+			<dd>打开本帮助</dd>
+			<dt>↑</dt>
+			<dd>兄弟节点之间移动</dd>
+			<dt>↓</dt>
+			<dd>兄弟节点之间移动</dd>
+			<dt>←</dt>
+			<dd>父子节点之间移动</dd>
+			<dt>→</dt>
+			<dd>父子节点之间移动</dd>
+			<dt>Alt + +</dt>
+			<dd>扩大</dd>
+			<dt>Alt + -</dt>
+			<dd>缩小</dd>
+			<dt>Alt + ←</dt>
+			<dd>向左平移</dd>
+			<dt>Alt + →</dt>
+			<dd>向右平移</dd>
+			<dt>Alt + ↑</dt>
+			<dd>向上平移</dd>
+			<dt>Alt + ↓</dt>
+			<dd>向下平移</dd>
+			<dt>F2</dt>
+			<dd>编辑节点文本</dd>
+			<dt>enter</dt>
+			<dd>应用文本编辑</dd>
+			<dd>添加兄弟节点</dd>
+			<dt>esc</dt>
+			<dd>放弃文本编辑</dd>
+		</dl>
+	</div>
+	<div id="settingDialog" class="dialog">
+		
+	</div>
+</body>
+</html>
